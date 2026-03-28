@@ -34,17 +34,20 @@ const NOTIF_INTERVALS = [
   { label: "1.5 hrs", value: 90 },
   { label: "2 hours", value: 120 },
 ];
-const HOURS = Array.from({ length: 24 }, (_, i) => {
-  const ampm = i < 12 ? "AM" : "PM";
-  const h = i === 0 ? 12 : i > 12 ? i - 12 : i;
-  return { label: `${h}:00 ${ampm}`, value: i };
-});
+const HOURS = [
+  ...Array.from({ length: 24 }, (_, i) => {
+    const ampm = i < 12 ? "AM" : "PM";
+    const h = i === 0 ? 12 : i > 12 ? i - 12 : i;
+    return { label: `${h}:00 ${ampm}`, value: i };
+  }),
+  { label: "11:59 PM", value: 23.99 },
+];
 
 // Default settings stored in localStorage
 const DEFAULT_SETTINGS = {
   notifInterval: 30,   // minutes
   notifStart: 8,       // hour (8am)
-  notifEnd: 21,        // hour (9pm)
+  notifEnd: 21,        // hour (9:00 PM)
   notifEnabled: false,
 };
 const loadSettings = () => { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("hydro_settings") || "{}") }; } catch { return DEFAULT_SETTINGS; } };
@@ -449,7 +452,7 @@ function SettingsTab({ token, userId, goal, onGoalChange, onSignOut }) {
     if (!settings.notifEnabled) return;
     intervalRef.current = setInterval(() => {
       const h = new Date().getHours();
-      if (h >= settings.notifStart && h < settings.notifEnd) {
+      if (h >= settings.notifStart && h <= settings.notifEnd) {
         pushNotif("Time to drink water! 💧", `Stay on track with your daily hydration goal.`);
       }
     }, settings.notifInterval * 60 * 1000);
@@ -540,7 +543,7 @@ function SettingsTab({ token, userId, goal, onGoalChange, onSignOut }) {
             <div style={{ fontSize: 12, color: "var(--t3)", marginTop: 2 }}>Last reminder of the day</div>
           </div>
           <div className="sel-wrap" style={{ width: 120 }}>
-            <select value={settings.notifEnd} onChange={e => updateSettings({ notifEnd: parseInt(e.target.value) })}
+            <select value={settings.notifEnd} onChange={e => updateSettings({ notifEnd: parseFloat(e.target.value) })}
               style={{ padding: "10px 36px 10px 14px", fontSize: 14, borderRadius: 12 }}>
               {HOURS.filter(h => h.value > settings.notifStart).map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
             </select>
