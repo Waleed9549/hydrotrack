@@ -297,7 +297,10 @@ function HomeTab({ token, userId, goal, onGoalChange, logs, onLogged, onSignOut 
   return (
     <div style={{ padding: "0 20px 100px", maxWidth: 600, margin: "0 auto" }}>
       {showManual && <AmountSheet title="Custom amount" subtitle="Type any amount between 1 – 5000 ml" confirmLabel="Log" onConfirm={logWater} onClose={() => setShowManual(false)} />}
-      {showGoal && <GoalSheet current={goal} onSave={onGoalChange} onClose={() => setShowGoal(false)} />}
+      {showGoal && <GoalSheet current={goal} onSave={async (g) => {
+        await sb.upsertProfile(token, userId, { daily_goal_ml: g });
+        onGoalChange(g);
+      }} onClose={() => setShowGoal(false)} />}
       {editEntry && <AmountSheet title="Edit entry" subtitle={`Current: ${editEntry.amount_ml} ml — enter the correct amount`} initial={editEntry.amount_ml} confirmLabel="Save" onConfirm={(ml) => editLog(editEntry.id, ml)} onClose={() => setEditEntry(null)} />}
 
       {/* Header */}
