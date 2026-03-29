@@ -237,7 +237,40 @@ async function refreshSession() {
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const toL = (ml) => (ml / 1000).toFixed(2);
-const today = () => new Date().toISOString().split("T")[0];
+
+// Returns local date string e.g. "2026-03-30" based on device timezone
+const today = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+// Returns local midnight start as ISO string (12:00:01 AM local time)
+const localDayStart = () => {
+  const d = new Date();
+  d.setHours(0, 1, 0, 0);  // 12:01 AM
+  return d.toISOString();
+};
+
+// Returns local day end as ISO string (11:59:59 PM local time)
+const localDayEnd = () => {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);  // 11:59 PM
+  return d.toISOString();
+};
+
+// Returns local date string for a specific date offset (0 = today, -1 = yesterday, etc.)
+const localDateStr = (offsetDays = 0) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
 const sum = (arr, key) => arr.reduce((a, b) => a + (b[key] || 0), 0);
 const CUP_SIZES = [200, 230, 250, 330, 500, 600];
 const GOAL_OPTIONS = [1500, 2000, 2500, 3000, 3500, 4000];
@@ -581,12 +614,22 @@ function HomeTab({ token, userId, goal, onGoalChange, logs, onLogged, onSignOut,
 function StatsTab({ allLogs, goal, t }) {
   const [view, setView] = useState("week");
   const now = new Date();
-  const todayStr = today();
+  const todayStr = today(); // local date string
   const weekData = () => {
     const days = t.week === "Week"
       ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
       : ["أحد","إثن","ثلا","أرب","خمس","جمع","سبت"];
-    return Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); const ds = d.toISOString().split("T")[0]; return { label: days[d.getDay()], value: sum(allLogs.filter(l => l.logged_at?.startsWith(ds)), "amount_ml") }; });
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - (6 - i));
+      const y = d.getFullYear(), mo = String(d.getMonth()+1).padStart(2,"0"), day = String(d.getDate()).padStart(2,"0");
+      const ds = `${y}-${mo}-${day}`;
+      return { label: days[d.getDay()], value: sum(allLogs.filter(l => {
+        if (!l.logged_at) return false;
+        const ld = new Date(l.logged_at);
+        const ly = ld.getFullYear(), lm = String(ld.getMonth()+1).padStart(2,"0"), lday = String(ld.getDate()).padStart(2,"0");
+        return `${ly}-${lm}-${lday}` === ds;
+      }), "amount_ml") };
+    });
   };
   const monthData = () => Array.from({ length: 4 }, (_, i) => { const s = new Date(); s.setDate(s.getDate() - (27 - i * 7)); s.setHours(0,0,0,0); const e = new Date(s); e.setDate(e.getDate() + 6); return { label: `${t.week === "Week" ? "W" : "أ"}${i+1}`, value: sum(allLogs.filter(l => { const d = new Date(l.logged_at); return d >= s && d <= e; }), "amount_ml") }; });
   const yearData = () => {
@@ -597,7 +640,12 @@ function StatsTab({ allLogs, goal, t }) {
   };
   const data = view === "week" ? weekData() : view === "month" ? monthData() : yearData();
   const maxV = Math.max(...data.map(d => d.value), 1);
-  const todayTotal = sum(allLogs.filter(l => l.logged_at?.startsWith(todayStr)), "amount_ml");
+  const todayTotal = sum(allLogs.filter(l => {
+      if (!l.logged_at) return false;
+      const ld = new Date(l.logged_at);
+      const ds = `${ld.getFullYear()}-${String(ld.getMonth()+1).padStart(2,"0")}-${String(ld.getDate()).padStart(2,"0")}`;
+      return ds === todayStr;
+    }), "amount_ml");
   const weekTotal = sum(weekData(), "value");
   const monthTotal = sum(allLogs.filter(l => { const d = new Date(l.logged_at); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }), "amount_ml");
   const yearTotal = sum(allLogs.filter(l => new Date(l.logged_at).getFullYear() === now.getFullYear()), "amount_ml");
@@ -791,16 +839,49 @@ function MainApp({ token, userId, goal, onGoalChange, onSignOut }) {
   const rtl = lang === "ar";
 
   const fetchToday = useCallback(async () => {
-    const data = await sb.getLogs(token, userId, `${today()}T00:00:00Z`, `${today()}T23:59:59Z`);
+    const data = await sb.getLogs(token, userId, localDayStart(), localDayEnd());
     if (Array.isArray(data)) setLogs(data);
   }, [token, userId]);
   const fetchAll = useCallback(async () => {
-    const from = new Date(new Date().getFullYear(), 0, 1).toISOString();
+    const d = new Date(); d.setMonth(0, 1); d.setHours(0, 0, 0, 0);
+    const from = d.toISOString();
     const data = await sb.getLogs(token, userId, from, new Date().toISOString());
     if (Array.isArray(data)) setAllLogs(data);
   }, [token, userId]);
 
   useEffect(() => { fetchToday(); fetchAll(); }, [fetchToday, fetchAll]);
+
+  // Detect day change — re-fetch logs and reset per-day goal at midnight
+  useEffect(() => {
+    let lastDate = today();
+
+    const checkDayChange = () => {
+      const currentDate = today();
+      if (currentDate !== lastDate) {
+        lastDate = currentDate;
+        fetchToday();
+        fetchAll();
+        // Reset goal to the default stored in Supabase (re-load profile)
+        sb.getProfile(token, userId).then(p => {
+          if (p?.daily_goal_ml) onGoalChange(p.daily_goal_ml);
+        }).catch(() => {});
+      }
+    };
+
+    // Check every minute — lightweight, no noticeable performance cost
+    const interval = setInterval(checkDayChange, 60 * 1000);
+
+    // Also check immediately when app becomes visible (e.g. open next morning)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkDayChange();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [fetchToday, fetchAll, token, userId, onGoalChange]);
 
   const refresh = async () => { await fetchToday(); fetchAll(); };
   const toggleLang = () => { const nl = lang === "en" ? "ar" : "en"; saveLang(nl); setLang(nl); };
