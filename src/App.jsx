@@ -211,40 +211,7 @@ const sb = {
   async getLogs(t, uid, from, to) { const r = await fetch(`${SUPABASE_URL}/rest/v1/water_logs?user_id=eq.${uid}&logged_at=gte.${from}&logged_at=lte.${to}&order=logged_at.asc`, { headers: this.h(t) }); return r.json(); },
   async getProfile(t, uid) { const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${uid}`, { headers: this.h(t) }); const rows = await r.json(); return rows[0]; },
   async upsertProfile(t, uid, data) { const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, { method: "POST", headers: { ...this.h(t), Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ id: uid, ...data }) }); return r.json(); },
-  async refreshToken(refreshToken) {
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-      method: "POST", headers: this.h(),
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    return r.json();
-  },
 };
-
-// ── TOKEN REFRESH ─────────────────────────────────────────────────────────────
-async function refreshSession() {
-  const refresh = localStorage.getItem("hydro_refresh");
-  if (!refresh) return null;
-  try {
-    const data = await sb.refreshToken(refresh);
-    if (data?.access_token) {
-      localStorage.setItem("hydro_token", data.access_token);
-      if (data.refresh_token) localStorage.setItem("hydro_refresh", data.refresh_token);
-      return data.access_token;
-    }
-  } catch {}
-  return null;
-}
-
-// Wraps any sb call — if it gets a 401/empty result, refreshes token and retries once
-async function withAuth(token, fn) {
-  const result = await fn(token);
-  // Supabase returns [] or {} with error for expired token
-  if (result && result.code === "PGRST301") {
-    const newToken = await refreshSession();
-    if (newToken) return fn(newToken);
-  }
-  return result;
-}
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const toL = (ml) => (ml / 1000).toFixed(2);
@@ -274,8 +241,7 @@ const HOURS = [
 const DEFAULT_SETTINGS = { notifInterval: 30, notifStart: 8, notifEnd: 21, notifEnabled: false };
 const loadSettings = () => { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("hydro_settings") || "{}") }; } catch { return DEFAULT_SETTINGS; } };
 const saveSettings = (s) => localStorage.setItem("hydro_settings", JSON.stringify(s));
-const VALID_LANGS = ["en", "ar"];
-const loadLang = () => { const l = localStorage.getItem("hydro_lang"); return VALID_LANGS.includes(l) ? l : "en"; };
+const loadLang = () => localStorage.getItem("hydro_lang") || "en";
 const saveLang = (l) => localStorage.setItem("hydro_lang", l);
 
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
@@ -373,15 +339,11 @@ function WaterBlob({ pct, t }) {
 }
 
 // ── LANGUAGE TOGGLE ───────────────────────────────────────────────────────────
-const LANGS = ["en", "ar"];
-const LANG_LABELS = { en: "EN", ar: "ع" };
-const NEXT_LANG_LABEL = { en: "العربية", ar: "English" };
-
 function LangToggle({ lang, onToggle }) {
   return (
     <button onClick={onToggle} style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "6px 12px", color: "var(--text)", fontSize: 13, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 15 }}>🌐</span>
-      {NEXT_LANG_LABEL[lang]}
+      {lang === "en" ? "العربية" : "English"}
     </button>
   );
 }
@@ -394,8 +356,8 @@ function Nav({ tab, setTab, t }) {
   );
   return (
     <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: "calc(var(--nav) + var(--safe))", paddingBottom: "var(--safe)", background: "rgba(6,13,26,.95)", borderTop: "1px solid rgba(255,255,255,.06)", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", zIndex: 100 }}>
-      {btn("home", lang === "ar" ? "الرئيسية" : "Home", a => <svg viewBox="0 0 24 24" width="22" height="22" fill={a ? "rgba(79,163,232,.2)" : "none"} stroke={a ? "var(--blue)" : "var(--t3)"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12L12 3l9 9" /><path d="M9 21V12h6v9" /></svg>)}
-      {btn("stats", lang === "ar" ? "إحصاء" : "Stats", a => <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={a ? "var(--blue)" : "var(--t3)"} strokeWidth="1.8"><rect x="3" y="12" width="4" height="9" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /><rect x="10" y="7" width="4" height="14" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /><rect x="17" y="3" width="4" height="18" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /></svg>)}
+      {btn("home", t.signIn === "Sign in" ? "Home" : "الرئيسية", a => <svg viewBox="0 0 24 24" width="22" height="22" fill={a ? "rgba(79,163,232,.2)" : "none"} stroke={a ? "var(--blue)" : "var(--t3)"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12L12 3l9 9" /><path d="M9 21V12h6v9" /></svg>)}
+      {btn("stats", t.yourStats === "Your stats" ? "Stats" : "إحصاء", a => <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={a ? "var(--blue)" : "var(--t3)"} strokeWidth="1.8"><rect x="3" y="12" width="4" height="9" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /><rect x="10" y="7" width="4" height="14" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /><rect x="17" y="3" width="4" height="18" rx="1" fill={a ? "rgba(79,163,232,.25)" : "none"} /></svg>)}
       {btn("settings", t.settings, a => <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke={a ? "var(--blue)" : "var(--t3)"} strokeWidth="1.8"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06-.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" /></svg>)}
     </nav>
   );
@@ -599,16 +561,16 @@ function StatsTab({ allLogs, goal, t }) {
   const now = new Date();
   const todayStr = today();
   const weekData = () => {
-    const days = lang === "ar"
-      ? ["أحد","إثن","ثلا","أرب","خمس","جمع","سبت"]
-      : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const days = t.week === "Week"
+      ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+      : ["أحد","إثن","ثلا","أرب","خمس","جمع","سبت"];
     return Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); const ds = d.toISOString().split("T")[0]; return { label: days[d.getDay()], value: sum(allLogs.filter(l => l.logged_at?.startsWith(ds)), "amount_ml") }; });
   };
-  const monthData = () => Array.from({ length: 4 }, (_, i) => { const s = new Date(); s.setDate(s.getDate() - (27 - i * 7)); s.setHours(0,0,0,0); const e = new Date(s); e.setDate(e.getDate() + 6); return { label: `${lang === "ar" ? "أ" : "W"}${i+1}`, value: sum(allLogs.filter(l => { const d = new Date(l.logged_at); return d >= s && d <= e; }), "amount_ml") }; });
+  const monthData = () => Array.from({ length: 4 }, (_, i) => { const s = new Date(); s.setDate(s.getDate() - (27 - i * 7)); s.setHours(0,0,0,0); const e = new Date(s); e.setDate(e.getDate() + 6); return { label: `${t.week === "Week" ? "W" : "أ"}${i+1}`, value: sum(allLogs.filter(l => { const d = new Date(l.logged_at); return d >= s && d <= e; }), "amount_ml") }; });
   const yearData = () => {
-    const mo = lang === "ar"
-      ? ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"]
-      : ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const mo = t.week === "Week"
+      ? ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+      : ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
     return Array.from({ length: 12 }, (_, i) => ({ label: mo[i], value: sum(allLogs.filter(l => new Date(l.logged_at).getMonth() === i), "amount_ml") }));
   };
   const data = view === "week" ? weekData() : view === "month" ? monthData() : yearData();
@@ -819,7 +781,7 @@ function MainApp({ token, userId, goal, onGoalChange, onSignOut }) {
   useEffect(() => { fetchToday(); fetchAll(); }, [fetchToday, fetchAll]);
 
   const refresh = async () => { await fetchToday(); fetchAll(); };
-  const toggleLang = () => { const nl = LANGS[(LANGS.indexOf(lang) + 1) % LANGS.length]; saveLang(nl); setLang(nl); };
+  const toggleLang = () => { const nl = lang === "en" ? "ar" : "en"; saveLang(nl); setLang(nl); };
 
   return (
     <div style={{ minHeight: "100dvh", background: "var(--bg)", overflowY: "auto" }} dir={rtl ? "rtl" : "ltr"}>
@@ -848,7 +810,7 @@ function AuthScreen({ onAuth }) {
   const [lang, setLang] = useState(loadLang);
   const t = T[lang];
   const rtl = lang === "ar";
-  const toggleLang = () => { const nl = LANGS[(LANGS.indexOf(lang) + 1) % LANGS.length]; saveLang(nl); setLang(nl); };
+  const toggleLang = () => { const nl = lang === "en" ? "ar" : "en"; saveLang(nl); setLang(nl); };
 
   const submit = async () => {
     if (!email || !password) { setMsg(t.fillFields); return; }
@@ -858,7 +820,6 @@ function AuthScreen({ onAuth }) {
     if (d.error) { setMsg(d.error.message); setLoading(false); return; }
     localStorage.setItem("hydro_token", d.access_token);
     localStorage.setItem("hydro_uid", d.user.id);
-    if (d.refresh_token) localStorage.setItem("hydro_refresh", d.refresh_token);
     onAuth(d.access_token, d.user.id);
     setLoading(false);
   };
@@ -970,68 +931,15 @@ export default function App() {
     }
   }, []);
 
-  // Validate session on mount — refresh token if expired
   useEffect(() => {
     if (!token || !userId) { setChecking(false); return; }
-    const validate = async () => {
-      let activeToken = token;
-      // Try profile fetch — if it fails, refresh the token
-      let profile = await sb.getProfile(activeToken, userId).catch(() => null);
-      if (!profile || profile.code) {
-        activeToken = await refreshSession();
-        if (!activeToken) {
-          // Refresh failed — session is truly expired, force sign out
-          localStorage.removeItem("hydro_token");
-          localStorage.removeItem("hydro_uid");
-          localStorage.removeItem("hydro_refresh");
-          setToken(null); setUserId(null); setChecking(false);
-          return;
-        }
-        setToken(activeToken);
-        profile = await sb.getProfile(activeToken, userId).catch(() => null);
-      }
-      if (profile?.daily_goal_ml) setGoal(profile.daily_goal_ml);
-      setChecking(false);
-    };
-    validate();
-  }, [userId]);
-
-  // Re-validate session whenever app comes back into focus (PWA resume)
-  useEffect(() => {
-    const onVisible = async () => {
-      if (document.visibilityState !== "visible") return;
-      const storedToken = localStorage.getItem("hydro_token");
-      const storedUid = localStorage.getItem("hydro_uid");
-      if (!storedToken || !storedUid) return;
-      // Quick check — if token still works, update state silently
-      const profile = await sb.getProfile(storedToken, storedUid).catch(() => null);
-      if (profile && !profile.code) {
-        setToken(storedToken);
-        if (profile.daily_goal_ml) setGoal(profile.daily_goal_ml);
-        return;
-      }
-      // Token expired — try to refresh
-      const newToken = await refreshSession();
-      if (newToken) {
-        setToken(newToken);
-        const p = await sb.getProfile(newToken, storedUid).catch(() => null);
-        if (p?.daily_goal_ml) setGoal(p.daily_goal_ml);
-      } else {
-        // Can't refresh — force sign out
-        localStorage.removeItem("hydro_token");
-        localStorage.removeItem("hydro_uid");
-        localStorage.removeItem("hydro_refresh");
-        setToken(null); setUserId(null); setGoal(null);
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, []);
+    sb.getProfile(token, userId).then(p => { if (p?.daily_goal_ml) setGoal(p.daily_goal_ml); setChecking(false); }).catch(() => setChecking(false));
+  }, [token, userId]);
 
   const handleAuth = (t, uid) => { setToken(t); setUserId(uid); };
   const handleSignOut = async () => {
     if (token) await sb.signOut(token);
-    localStorage.removeItem("hydro_token"); localStorage.removeItem("hydro_uid"); localStorage.removeItem("hydro_refresh");
+    localStorage.removeItem("hydro_token"); localStorage.removeItem("hydro_uid");
     setToken(null); setUserId(null); setGoal(null);
   };
 
