@@ -211,7 +211,29 @@ const sb = {
   async getLogs(t, uid, from, to) { const r = await fetch(`${SUPABASE_URL}/rest/v1/water_logs?user_id=eq.${uid}&logged_at=gte.${from}&logged_at=lte.${to}&order=logged_at.asc`, { headers: this.h(t) }); return r.json(); },
   async getProfile(t, uid) { const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${uid}`, { headers: this.h(t) }); const rows = await r.json(); return rows[0]; },
   async upsertProfile(t, uid, data) { const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, { method: "POST", headers: { ...this.h(t), Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ id: uid, ...data }) }); return r.json(); },
+  async refreshToken(rt) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST", headers: this.h(),
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    return r.json();
+  },
 };
+
+// ── TOKEN REFRESH ─────────────────────────────────────────────────────────────
+async function refreshSession() {
+  const rt = localStorage.getItem("hydro_refresh");
+  if (!rt) return null;
+  try {
+    const data = await sb.refreshToken(rt);
+    if (data?.access_token) {
+      localStorage.setItem("hydro_token", data.access_token);
+      if (data.refresh_token) localStorage.setItem("hydro_refresh", data.refresh_token);
+      return data.access_token;
+    }
+  } catch {}
+  return null;
+}
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const toL = (ml) => (ml / 1000).toFixed(2);
@@ -820,6 +842,7 @@ function AuthScreen({ onAuth }) {
     if (d.error) { setMsg(d.error.message); setLoading(false); return; }
     localStorage.setItem("hydro_token", d.access_token);
     localStorage.setItem("hydro_uid", d.user.id);
+    if (d.refresh_token) localStorage.setItem("hydro_refresh", d.refresh_token);
     onAuth(d.access_token, d.user.id);
     setLoading(false);
   };
@@ -926,20 +949,80 @@ export default function App() {
       const params = new URLSearchParams(hash.replace("#", "?"));
       const t = params.get("access_token");
       if (t) sb.getUser(t).then(u => {
-        if (u?.id) { localStorage.setItem("hydro_token", t); localStorage.setItem("hydro_uid", u.id); setToken(t); setUserId(u.id); window.history.replaceState({}, "", window.location.pathname); }
+        if (u?.id) {
+            localStorage.setItem("hydro_token", t);
+            localStorage.setItem("hydro_uid", u.id);
+            const rt = params.get("refresh_token");
+            if (rt) localStorage.setItem("hydro_refresh", rt);
+            setToken(t); setUserId(u.id);
+            window.history.replaceState({}, "", window.location.pathname);
+          }
       });
     }
   }, []);
 
+  // On mount: validate session, auto-refresh token if expired
   useEffect(() => {
     if (!token || !userId) { setChecking(false); return; }
-    sb.getProfile(token, userId).then(p => { if (p?.daily_goal_ml) setGoal(p.daily_goal_ml); setChecking(false); }).catch(() => setChecking(false));
-  }, [token, userId]);
+    const validate = async () => {
+      let activeToken = token;
+      let profile = await sb.getProfile(activeToken, userId).catch(() => null);
+      // If profile fetch failed (token expired), try refreshing
+      if (!profile || profile.code) {
+        activeToken = await refreshSession();
+        if (!activeToken) {
+          // Refresh also failed — force sign out
+          localStorage.removeItem("hydro_token");
+          localStorage.removeItem("hydro_uid");
+          localStorage.removeItem("hydro_refresh");
+          setToken(null); setUserId(null); setChecking(false);
+          return;
+        }
+        setToken(activeToken);
+        profile = await sb.getProfile(activeToken, userId).catch(() => null);
+      }
+      if (profile?.daily_goal_ml) setGoal(profile.daily_goal_ml);
+      setChecking(false);
+    };
+    validate();
+  }, [userId]);
+
+  // When app becomes visible again (PWA resume / tab switch), re-validate silently
+  useEffect(() => {
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      const storedToken = localStorage.getItem("hydro_token");
+      const storedUid = localStorage.getItem("hydro_uid");
+      if (!storedToken || !storedUid) return;
+      const profile = await sb.getProfile(storedToken, storedUid).catch(() => null);
+      if (profile && !profile.code) {
+        // Token still valid — sync state silently
+        setToken(storedToken);
+        if (profile.daily_goal_ml) setGoal(profile.daily_goal_ml);
+        return;
+      }
+      // Token expired — refresh it
+      const newToken = await refreshSession();
+      if (newToken) {
+        setToken(newToken);
+        const p = await sb.getProfile(newToken, storedUid).catch(() => null);
+        if (p?.daily_goal_ml) setGoal(p.daily_goal_ml);
+      } else {
+        // Can't recover — sign out cleanly
+        localStorage.removeItem("hydro_token");
+        localStorage.removeItem("hydro_uid");
+        localStorage.removeItem("hydro_refresh");
+        setToken(null); setUserId(null); setGoal(null);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const handleAuth = (t, uid) => { setToken(t); setUserId(uid); };
   const handleSignOut = async () => {
     if (token) await sb.signOut(token);
-    localStorage.removeItem("hydro_token"); localStorage.removeItem("hydro_uid");
+    localStorage.removeItem("hydro_token"); localStorage.removeItem("hydro_uid"); localStorage.removeItem("hydro_refresh");
     setToken(null); setUserId(null); setGoal(null);
   };
 
