@@ -1,4 +1,4 @@
-# 💧 HydroTrack
+# 💧 HydroTrack - updated
 
 A beautiful, mobile-first hydration tracking web app built with React and Supabase. Install it on your iPhone or iPad home screen for a native app experience with fully customizable push notification reminders.
 
